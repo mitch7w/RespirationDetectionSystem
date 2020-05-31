@@ -13,6 +13,7 @@
     cblock 0x00
     BREATHPM ; Breaths per minute (Breathing rate)
     SM ; Stores current state enable bits
+    HOTBREATH ; In Calibration state this is set
     endc
 
 ; Bit Definitions
@@ -28,6 +29,8 @@ Func2 		equ .2
 ; ----- PIC starts up here -----
 
 ; ------ Set up all variables -------
+    MOVLW 0x0
+    MOVWF BREATHPM ; Sets breathing rate = 0
 
 ; Setup LEDs for illumination
     MOVLB	0xF
@@ -65,7 +68,8 @@ CALIBRATION
     GOTO BREATHDETECT ; this state is disabled (fall through)
     ; State is enabled
     ; -------- Calibration state code --------
-    ;
+    ; Do something like ask user to breath onto thermistor and store that value
+    ; then in breathDetect function to compare against
     ;
     ;
 TransitionCalibration
@@ -82,7 +86,7 @@ BREATHDETECT
     ;
     ;
     ;
-TransitionBreathDirect
+TransitionBreathDetect
     BCF SM, Func2 ; Leave Calibration state
     BSF SM, Func0 ; enable BreathDetect state
     
@@ -90,7 +94,7 @@ TransitionBreathDirect
 ISR ; interrupt code
     ; handle capacitive touch button in here
 	RETFIE
-    
+   
     end
 
     ; ISR for switching off ADC and returning to Startup state when capacitive touch
