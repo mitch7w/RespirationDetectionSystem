@@ -9,6 +9,11 @@
     CONFIG  WDTEN = OFF           ; Watchdog Timer Enable bit (WDT is controlled by SWDTEN bit of the WDTCON register
     CONFIG  LVP = ON              ; ***Single-Supply ICSP Enable bit (Single-Supply ICSP enabled if MCLRE is also 1)
     
+    ;Oscillator set at 4 MHz
+	bsf 	OSCCON,IRCF0
+	bcf	OSCCON,IRCF1
+	bsf	OSCCON,IRCF2    
+    
     cblock
 	ADCRESULT
 	LOWTHRESHOLD
@@ -16,13 +21,12 @@
 	REACHEDHIGH
 	BREATHPM
 	NUMBREATHSCOUNTED
-	AVGCALC
-	NUMERATOR
-	DENOMINATOR
-	QUOTIENT
+	TIMERROLLOVERS
+	TOTALROLLSHIGH
+	TOTALROLLSLOW
     endc
-    ;org 08h ISR Vector
-	;GOTO ADCISR
+    org 08h ; ISR Vector
+	GOTO TimerISR
     org 00h ; Reset Vector
     
     ;------- Setup PORTD for ADC LED output ----------
@@ -45,23 +49,23 @@
 	    BSF ADCON0, ADON ; ADC's ANO enabled
 	    MOVLB 0x0 ; Back to main bank
 	    
+	    ;------- Setup Timer2 for counting respiration rate ----------
+	    MOVLW B'01111010' ; Timer 2 has 16 post and prescaler values
+	    MOVF T2CON ; Thus with additional counter can count around 16s
+	    
     ;------Initialize variables-------------
     
 	    CLRF REACHEDHIGH ; REACHEDHIGH = 0
 	    CLRF BREATHPM ; BREATHPM = 0
 	    CLRF NUMBREATHSCOUNTED ; numBreaths = 0
-	    CLRF AVGCALC ; avgCalc = 0
 	    MOVLW 0x64
 	    MOVWF LOWTHRESHOLD
 	    MOVLW 0x6A
 	    MOVWF HIGHTHRESHOLD
+	    CLRF TIMERROLLOVERS
+	    CLRF TOTALROLLSHIGH
+	    CLRF TOTALROLLSLOW
 	    
-;------- Setup Timer2 for counting respiration rate ----------
-	    MOVLW b'00000001' ; TODO change this to correct postscalar values and whatnot
-	    MOVWF T2CON
-	    MOVLW d'200'
-	    MOVWF PR2 ; preloading period values or something TODO read datasheet to understand this   
-    
     ;---- Conversion polling--------- TODO : CHANGE THIS TO AN INTERRUPT
 POLL    BSF ADCON0, GO ; Start ADC conversion
 	    BTFSC ADCON0,GO ; If conversion done skip the next line
@@ -91,108 +95,113 @@ EvaluateH   MOVF HIGHTHRESHOLD,W ; Put high threshold in W for comparison
 ADCEND	    RETURN
 	
 	    ;------- SRLOW called when user inhaling ----------
-SRLOW	    MOVLW b'11111111' 
-	    CPFSEQ REACHEDHIGH ; skip next line if reachedHigh = true
+SRLOW	    BTFSS REACHEDHIGH,0 ; skip next line if reachedHigh = true
 	    GOTO TIMERCHECK ; reachedHigh not = true, go to timerCheck
 	    ; reachedHigh is = true
 	    BCF T2CON,TMR2ON ; switch off timer
-	    CLRF REACHEDHIGH ; reachedHigh = false
-	    MOVF TMR2,0; write breath period to W
-	    ADDLW AVGCALC ; AVGCALC gets new value of timer added each time
-	    MOVWF AVGCALC
+	    BCF REACHEDHIGH,0 ; reachedHigh = false
+	    ; One full breath has now occured
+	    MOVF TMR2,0; write last little bit of timer to W TODO implemetn something to account for these lost seconds
+	    ; TIMERROLLOVERS now has how many times the timer rolled over
+	    ; add timerrollovers to totalrollovers
+	    MOVFF TIMERROLLOVERS,W ; W = TIMERROLLOVERS
+	    ADDWF TOTALROLLSLOW,1
+	    BNC IncrementNB; if there no carry don't add a high byte
+	    INCF TOTALROLLSHIGH ;there was a carry add it to the totalrollshigh
+IncrementNB
 	    INCF NUMBREATHSCOUNTED; numBreathsCounted++
 	    MOVLW 0x08
 	    CPFSLT NUMBREATHSCOUNTED ; if numBreathsCounted < 8 skip next line
 	    CALL SRAVERAGEBREATHS; numBreathsCounted = 8
+	    CLRF TIMERROLLOVERS ; so can begin counting anew
 	    BRA LOWRETURN
 TIMERCHECK  
-	    MOVLW b'0'
-	    CPFSEQ TMR2ON,W ; Skip next line if timer not started TODO Check notation
+	    BTFSC TMR2ON,W ; Skip next line if timer not started
 	    BRA LOWRETURN ; timer has started
 	    CLRF TMR2 ; if timer not started start it
 	    BSF T2CON,TMR2ON    
 LOWRETURN   RETURN
 	    
 	    ;-------- SRHIGH called when user exhaling------
-SRHIGH	    MOVLW b'0'
-	    CPFSEQ TMR2ON,W ; Skip next line if timer not started TODO Check notation
-	    SETF REACHEDHIGH ; reachedHigh = true	    
+SRHIGH	    BTFSC T2CON,TMR2ON ; Skip next line if timer not started
+	    BSF REACHEDHIGH,0 ; reachedHigh = true	    
 HIGHRETURN  RETURN
 	    
 	    
 SRAVERAGEBREATHS    ; Average last 8 breaths to get respiration rate
-	    ; AVGCALC contains sum of all breath periods
-	    MOVFF AVGCALC,NUMERATOR ; Numerator = added sum of all breath periods
-	    MOVLW 0x08
-	    MOVWF DENOMINATOR; DENOMINATOR = 8;
-	    CALL DIVIDE; divide avgcalc by 8 to get avg period
-	    ; avg period = QUOTIENT . NUMERATOR
-	   
-	    ; can't just throw away decimal like this
-	    MOVFF DENOMINATOR, QUOTIENT ; DENOMINATOR = QUOTIENT
-	   MOVLW 0x1
-	   MOVWF NUMERATOR ; numerator = 1
-	   CALL DIVIDE ; divide 1 by breath period to get breath per second
-	    MOVLW 0x3c ; 60
-	    MULWF QUOTIENT; multiply by 60 to get breath pm
-	    ; multiplication result stored in PRODH and PRODL
+	    ; TOTALROLLSLOW and TOTALROLLS HIGH contains total number of timer rollovers
+	    ; Multiply timer count by pre and postcaler value to get time in seconds
+	    ; Each timer rollover worth 0.065536s
+	    ; divide TotalRolls by 8 in order to get rolls for one breath
+	    RRNCF TOTALROLLSLOW
+	    RRNCF TOTALROLLSLOW
+	    RRNCF TOTALROLLSLOW
+	    MOVLW B'00011111'
+	    ANDLW TOTALROLLSLOW,1
+	    RRNCF TOTALROLLSHIGH
+	    RRNCF TOTALROLLSHIGH
+	    RRNCF TOTALROLLSHIGH
+	    BTFSC TOTALROLLSHIGH,7
+	    BSF TOTALROLLSLOW,7
+	    BTFSC TOTALROLLSHIGH,6
+	    BSF TOTALROLLSLOW,6
+	    BTFSC TOTALROLLSHIGH,5
+	    BSF TOTALROLLSLOW,5 
+	    MOVLW B'00011111'
+	    ANDLW TOTALROLLSHIGH,1
+	    ; successfuly divided whole of totalRolls by 8
+	    ; totalRolls now represents rollovers taken for one breath
+	    ; only have to work with TOTALROLLSLOW in PICLEDS cause if value above a certain threshold the person is dead anyway
 	    
-	    MOVF PRODL,0 ; place PRODL in W assuming product never uses prodH
-	    MOVWF BREATHPM; write result to BREATHPM
+	    MOVFF TOTALROLLSLOW ROLLSPERBREATH; timer rollovers per breath (average)
 	    CALL PICLEDS
 	    CLRF NUMBREATHSCOUNTED ; start counting numBreaths again
-	    CLRF AVGCALC ; the average register must be cleared
+	    CLRF TOTALROLLSHIGH 
+	    CLRF TOTALROLLSLOW ; the rollover count must be cleared
 	    RETURN 
-
-	    ;-------- SR to divide AVG CALC by 8 - yields average respiration period ---------
-DIVIDE
-	    CLRF QUOTIENT
-	    ; Numerator = added sum of all breath periods
-	    MOVF DENOMINATOR,0 ; WREG = Denominator = 8
-DIVIDECYCLE
-	    INCF QUOTIENT ; quotient++ for every 8 subtracted
-	    SUBWF NUMERATOR ; subtract 8 each time
-	    BC DIVIDECYCLE ; repeat until carry = 0
-	    DECF QUOTIENT ; one too many
-	    ADDWF NUMERATOR ; so have to add 10 back to get remainder
-	    ; quotient = answer , numerator = answer remainder
-	    RETURN
 	    
 ; -------- Subroutine to SET PIC LEDs ----------
 PICLEDS
 	; Check value of BREATHPM and set various PIC LEDs accordingly		
-Less12
+Greater76
 	    
-	    MOVLW 0xC
-	    CPFSLT BREATHPM ; skip next line if BREATHPM < 12
-	    GOTO Less16 ; BREATHPM > 12
-	    MOVLW   b'00000000' ; BREATHPM <12
+	    MOVLW 0x4C ; 76 rolls
+	    CPFSGT ROLLSPERBREATH ; skip next line if ROLLSPERBREATH > 76
+	    GOTO Greater57 ; ROLLSPERBREATH < 76
+	    MOVLW   b'00000000' ; ROLLSPERBREATH > 76
 	    MOVWF PORTA ; All LEDs on PORTA off
 	    GOTO RETURNLEDS
-Less16
-	    MOVLW 0x10
-	    CPFSLT BREATHPM ; skip next line if BREATHPM < 16
-	    GOTO Less20 ; BREATHPM > 16
-	    MOVLW   b'00000001' ; BREATHPM is between 12 and 16
-	    MOVWF PORTA ; 1 LED on PORTA on
+Greater57
+	    MOVLW 0x39 ; 57 rolls
+	    CPFSGT ROLLSPERBREATH ; skip next line if ROLLSPERBREATH > 57
+	    GOTO Greater46 ; ROLLSPERBREATH < 57
+	    MOVLW   b'00000001' ; ROLLSPERBREATH > 57
+	    MOVWF PORTA ; 1 LEDs on PORTA on
 	    GOTO RETURNLEDS
-Less20
-	    MOVLW 0x14
-	    CPFSLT BREATHPM ; skip next line if BREATHPM < 20
-	    GOTO Less30 ; BREATHPM > 20
-	    MOVLW   b'00000011' ; BREATHPM is between 16 and 20
+	    
+Less46
+	    MOVLW 0x2E ; 46 rolls
+	    CPFSGT ROLLSPERBREATH ; skip next line if ROLLSPERBREATH > 46
+	    GOTO Greater30 ; ROLLSPERBREATH < 46
+	    MOVLW   b'00000011' ; ROLLSPERBREATH > 46
 	    MOVWF PORTA ; 2 LEDs on PORTA on
 	    GOTO RETURNLEDS
-Less30
-	    MOVLW 0x1E
-	    CPFSLT BREATHPM ; skip next line if BREATHPM < 30
-	    GOTO Greater30 ; BREATHPM > 30
-	    MOVLW   b'00000111' ; BREATHPM is between 20 and 30
+Greater30
+	    MOVLW 0x1E ; 30 rolls
+	    CPFSGT ROLLSPERBREATH ; skip next line if ROLLSPERBREATH > 30
+	    GOTO Less30 ; ROLLSPERBREATH < 30
+	    MOVLW   b'00000111' ; ROLLSPERBREATH > 30
 	    MOVWF PORTA ; 3 LEDs on PORTA on
 	    GOTO RETURNLEDS
-Greater30
-	    MOVLW   b'00001111' ; BREATHPM is between 16 and 20
+Less30
+	    MOVLW   b'00001111' ; ROLLSPERBREATH < 30
 	    MOVWF PORTA ; 4 LEDs on PORTA on
 RETURNLEDS  RETURN ; PICLEDS Subroutine returns
 	    
-    end
+TimerISR
+	    ; 0.065536s have elapsed since Timer gone through whole 1 period
+	    INCF TIMERROLLOVERS ; Add one rollover count
+	    BCF T2CON,TMR2ON ; switch off timer
+	    RETFIE
+	    
+	    end
