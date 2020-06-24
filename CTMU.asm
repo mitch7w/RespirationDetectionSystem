@@ -9,7 +9,7 @@
 	OPENSWITCH ; voltage value for when capacitor switch not pressed
 	CTMUVOLTAGE 
 	CAPSWITCHPRESSED
-	Delay2
+	CapDelay
     endc
     
     org 00h ; Reset Vector
@@ -32,22 +32,21 @@ STARTUP
 	CLRF 		TRISA		; All digital outputs
 	MOVLB		0x00
 	
-	
+	MOVLB	0xF
 	;---------- ADC for CTMU setup ----------
 	MOVLW	B'10111110' ; Right Justified, 20TAD, FOSC/64
 	MOVWF	ADCON2
 	MOVLW	B'10000000' ; Trigger from CTMU, AVdd and AVss reference voltages
 	MOVWF	ADCON1
-	MOVLW	B'00001000'
+	MOVLW	B'0001000'
 	MOVWF	ADCON0
-	; PORT for ADC
 	BSF TRISA,2 ; Channel 2 is input
 	BSF ANSELA,2 ; is ADC input
 	BSF ADCON0,ADON ; enable ADC
 	
-	MOVLB 0x0F; BSR change
-		
 	
+		
+	MOVLB 0x0F; BSR change
 ;---------- CTMU Setup -------------
 	MOVLW	B'00000000'
 	MOVWF	CTMUCONH
@@ -100,13 +99,12 @@ ENDCAP	GOTO	CAPDETECT
 	
 Delay
 	MOVLW	0xFF		
-	MOVWF	Delay2
+	MOVWF	CapDelay
 Decrement
-	DECFSZ	Delay2,f
+	DECFSZ	CapDelay,f
 	GOTO	Decrement
 	RETURN
 	
 	end
     
     
-    ; TODO CHECK BANK SWITCHING

@@ -338,7 +338,7 @@ PWMHIGH
 	    BSF	CCP1CON,4 ; 0.25
 	    RETURN
 TimerISR
-	    ; 0.065536s have elapsed (Timer gone through whole 16 periods)
+	    ; 0.065536s have elapsed (Timer gone through whole 16 rollovers)
 	    INCF TIMERROLLOVERS ; Add one rollover count
 	    BCF	PIR5,TMR4IF
 	    RETFIE
