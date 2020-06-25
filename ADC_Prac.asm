@@ -208,7 +208,7 @@ DecrementTC
 	    
 	    ; erase tableCounter for next averaging
 	    CLRF 	TBLPTRU 	; Upper byte of table address 00
-	    MOVLW 	0x01		
+	    MOVLW 	0x10		
 	    MOVWF 	TBLPTRH 	; High byte of table address 01
 	    MOVLW 	0x00
 	    MOVWF 	TBLPTRL	; Low byte of table address 00
@@ -227,7 +227,7 @@ DecrementTC
 	    BCF	EECON1, WREN ; disable memory writing
 	    
 	    CLRF 	TBLPTRU 	; Upper byte of table address 00
-	    MOVLW 	0x01		
+	    MOVLW 	0x10		
 	    MOVWF 	TBLPTRH 	; High byte of table address 01
 	    MOVLW 	0x00
 	    MOVWF 	TBLPTRL	; Low byte of table address 00
