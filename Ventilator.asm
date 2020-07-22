@@ -12,7 +12,7 @@
 ; Define variables
     cblock 0x00
     SM ;0x0	Stores current state enable bits
-    OPENSWITCH ;0x1	voltage value for when capacitor switch not pressed
+    CLOSEDSWITCH ;0x1	voltage value for when capacitor switch not pressed
     CTMUVOLTAGE ;0x2	voltage result from ADC
     FiveCounter ;0x3	counter for FiveDelay
     CapDelay ;0x4	value for 250us cap switch delay
@@ -104,7 +104,7 @@ STARTUP
     ; -------- Startup state code --------
 	BSF	PORTB,0 ; LED state indicator
 	MOVLW	0x02
-	MOVWF	OPENSWITCH ; Set what the voltage value for the open switch is
+	MOVWF	CLOSEDSWITCH ; Set what the voltage value for the open switch is
 	
 	;---------- ADC for CTMU setup ----------
 	MOVLB	0xF
@@ -149,7 +149,7 @@ CAPDETECT
 	BRA 	$-2 ; not finished
 	; conversion now finished
 	MOVFF	ADRESH,CTMUVOLTAGE
-	MOVF	OPENSWITCH,0 ; W = open switch value
+	MOVF	CLOSEDSWITCH,0 ; W = open switch value
 	CPFSEQ	CTMUVOLTAGE ; skip next line if CTMUVOLTAGE < open switch voltage
 	GOTO	TransitionStartup
 	; switch has been pressed
@@ -599,5 +599,4 @@ Timer4Interrupt
 	BCF	PIR5,TMR4IF
 InterruptReturn
 	RETFIE
-	    
     end
